@@ -1,0 +1,61 @@
+name: Daisy kernel baseline build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: lineage-22.2
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential flex \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            libssl-dev libelf-dev lld clang llvm python3
+
+      - name: Configure baseline
+        run: |
+          make ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            msm8953-perf_defconfig
+          make ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            olddefconfig
+          cp .config baseline.config
+
+      - name: Compile kernel
+        run: |
+          make -j2 ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            Image.gz-dtb dtbs
+
+      - name: Upload build results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daisy-baseline-build
+          path: |
+            arch/arm64/boot/Image.gz-dtb
+            arch/arm64/boot/Image
+            arch/arm64/boot/dts/qcom/*.dtb
+            baseline.config
+          if-no-files-found: warn
+          retention-days: 7
