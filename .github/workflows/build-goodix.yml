@@ -1,0 +1,80 @@
+name: Build Goodix GT917D kernel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout this repository (patch and build files)
+        uses: actions/checkout@v4
+        with:
+          ref: lineage-22.2
+          path: build-kit
+          fetch-depth: 1
+
+      - name: Checkout kernel source matching the boot image
+        uses: actions/checkout@v4
+        with:
+          repository: xiaomi-msm8953-devs/android_kernel_xiaomi_msm8953
+          ref: dcaf331bd84a5faf23b8641ff195e4833a5c47bc
+          path: kernel
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential flex \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            libssl-dev libelf-dev lld clang llvm python3
+
+      - name: Verify and apply Goodix patch
+        working-directory: kernel
+        run: |
+          git apply --check ../build-kit/patches/goodix-gt917d-irq-rt52.patch
+          git apply ../build-kit/patches/goodix-gt917d-irq-rt52.patch
+
+      - name: Configure Daisy kernel
+        working-directory: kernel
+        run: |
+          make ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            msm8953-perf_defconfig
+          scripts/kconfig/merge_config.sh -m .config \
+            arch/arm64/configs/xiaomi/daisy.config
+          make ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            olddefconfig
+          grep -E 'CONFIG_(MACH_XIAOMI_DAISY|TOUCHSCREEN_GT917D_D1S)=' .config
+
+      - name: Compile kernel image and device trees
+        working-directory: kernel
+        run: |
+          make -j2 ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            Image.gz-dtb dtbs
+          test -s arch/arm64/boot/Image.gz-dtb
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: goodix-gt917d-kernel-image
+          path: |
+            kernel/arch/arm64/boot/Image.gz-dtb
+            kernel/arch/arm64/boot/dts/qcom/*.dtb
+            kernel/.config
+            kernel/System.map
+          if-no-files-found: warn
+          retention-days: 7
