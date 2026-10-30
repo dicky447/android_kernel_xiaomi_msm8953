@@ -1,0 +1,37 @@
+diff --git a/drivers/input/touchscreen/gt917d_d1s/gt9xx.c b/drivers/input/touchscreen/gt917d_d1s/gt9xx.c
+index 83abf85f12fb6152bd3014cf4a737120e5d5d658..0000000000000000000000000000000000000000 100644
+--- a/drivers/input/touchscreen/gt917d_d1s/gt9xx.c
++++ b/drivers/input/touchscreen/gt917d_d1s/gt9xx.c
+@@ -18,6 +18,7 @@
+  */
+
+ #include <linux/irq.h>
++#include <linux/sched.h>
+ #include <linux/platform_device.h>
+ #include <linux/pinctrl/consumer.h>
+ #include <linux/input/mt.h>
+@@ -729,9 +730,21 @@ static enum hrtimer_restart gtp_timer_handler(struct hrtimer *timer)
+ 	return HRTIMER_NORESTART;
+ }
+
++/*
++ * The Goodix handler is the threaded handler passed to request_threaded_irq().
++ * Give its IRQ thread a small priority advantage under CPU contention.
++ * This does not change the controller's scan/report rate.
++ */
++static bool gtp_irq_rt_priority_set;
++
+ static irqreturn_t gtp_irq_handler(int irq, void *dev_id)
+ {
+ 	struct goodix_ts_data *ts = dev_id;
++	struct sched_param param = {
++		.sched_priority = 52,
++	};
++
++	if (!gtp_irq_rt_priority_set &&
++	    !sched_setscheduler_nocheck(current, SCHED_FIFO, &param))
++		gtp_irq_rt_priority_set = true;
++
+ 	gtp_work_func(ts);
+ 	return IRQ_HANDLED;
+}
