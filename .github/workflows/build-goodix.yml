@@ -30,6 +30,7 @@ jobs:
           fetch-depth: 1
 
       - name: Fix KGSL trace header include path
+        working-directory: kernel
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -40,7 +41,7 @@ jobs:
               first = "ccflags-y := -Iinclude/linux"
               if first not in s:
                   raise SystemExit("Expected KGSL ccflags-y line not found")
-              s = s.replace(first, first + "\\n" + flag, 1)
+              s = s.replace(first, first + "\n" + flag, 1)
               p.write_text(s)
           PY
 
