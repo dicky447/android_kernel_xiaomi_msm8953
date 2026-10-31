@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     steps:
-      - name: Checkout this repository (patch and build files)
+      - name: Checkout build scripts
         uses: actions/checkout@v4
         with:
           ref: lineage-22.2
@@ -29,45 +29,64 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            bc bison build-essential flex \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            libssl-dev libelf-dev lld clang llvm python3
+          sudo apt-get install -y bc bison build-essential flex gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libelf-dev lld clang llvm python3
 
-      - name: Verify and apply Goodix patch
+      - name: Apply Goodix IRQ scheduling experiment
         working-directory: kernel
         run: |
-          git apply --check ../build-kit/patches/goodix-gt917d-irq-rt52.patch
-          git apply ../build-kit/patches/goodix-gt917d-irq-rt52.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("drivers/input/touchscreen/gt917d_d1s/gt9xx.c")
+          s = p.read_text()
+          include = "#include <linux/irq.h>"
+          if "#include <linux/sched.h>" not in s:
+              if include not in s:
+                  raise SystemExit("Expected IRQ include not found")
+              s = s.replace(include, include + "\n#include <linux/sched.h>", 1)
+          marker = "static irqreturn_t gtp_irq_handler(int irq, void *dev_id)\n{\n\tstruct goodix_ts_data *ts = dev_id;\n"
+          replacement = """/*
+           * Experimental: give the threaded Goodix IRQ handler a modest
+           * scheduling advantage under CPU contention. This does not change
+           * the touchscreen controller scan/report rate.
+           */
+          static bool gtp_irq_rt_priority_set;
+
+          static irqreturn_t gtp_irq_handler(int irq, void *dev_id)
+          {
+          \tstruct goodix_ts_data *ts = dev_id;
+          \tstruct sched_param param = { .sched_priority = 52 };
+
+          \tif (!gtp_irq_rt_priority_set &&
+          \t    !sched_setscheduler_nocheck(current, SCHED_FIFO, &param))
+          \t\tgtp_irq_rt_priority_set = true;
+          """
+          if "gtp_irq_rt_priority_set" not in s:
+              if marker not in s:
+                  raise SystemExit("Expected gtp_irq_handler source block not found")
+              s = s.replace(marker, replacement, 1)
+          p.write_text(s)
+          PY
 
       - name: Configure Daisy kernel
         working-directory: kernel
         run: |
-          make ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            msm8953-perf_defconfig
-          scripts/kconfig/merge_config.sh -m .config \
-            arch/arm64/configs/xiaomi/daisy.config
-          make ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            olddefconfig
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- msm8953-perf_defconfig
+          scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/xiaomi/daisy.config
+          scripts/config --disable BTFM_SLIM --disable BTFM_SLIM_WCN3990
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
           grep -E 'CONFIG_(MACH_XIAOMI_DAISY|TOUCHSCREEN_GT917D_D1S)=' .config
+          grep -q '^CONFIG_MACH_XIAOMI_DAISY=y$' .config
+          grep -q '^CONFIG_TOUCHSCREEN_GT917D_D1S=y$' .config
+          ! grep -q '^CONFIG_BTFM_SLIM=y$' .config
 
       - name: Compile kernel image and device trees
         working-directory: kernel
         run: |
-          make -j2 ARCH=arm64 \
-            CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            Image.gz-dtb dtbs
+          make -j2 ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image.gz-dtb dtbs
           test -s arch/arm64/boot/Image.gz-dtb
 
       - name: Upload build artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: goodix-gt917d-kernel-image
@@ -76,5 +95,5 @@ jobs:
             kernel/arch/arm64/boot/dts/qcom/*.dtb
             kernel/.config
             kernel/System.map
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
