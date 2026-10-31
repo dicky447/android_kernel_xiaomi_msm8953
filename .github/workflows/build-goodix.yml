@@ -45,6 +45,22 @@ jobs:
               p.write_text(s)
           PY
 
+      - name: Fix camera SMMU local header include
+        working-directory: kernel
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("drivers/media/platform/msm/camera_v2/common/cam_smmu_api.c")
+          s = p.read_text()
+          old = "#include <msm_camera_tz_util.h>"
+          new = '#include "msm_camera_tz_util.h"'
+          if old in s:
+              s = s.replace(old, new, 1)
+              p.write_text(s)
+          elif new not in s:
+              raise SystemExit("Expected msm_camera_tz_util.h include not found")
+          PY
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
