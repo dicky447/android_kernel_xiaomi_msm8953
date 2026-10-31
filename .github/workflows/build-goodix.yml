@@ -26,6 +26,21 @@ jobs:
           path: kernel
           fetch-depth: 1
 
+      - name: Fix KGSL trace header include path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("drivers/gpu/msm/Makefile")
+          s = p.read_text()
+          flag = "ccflags-y += -I$(src)"
+          if flag not in s:
+              first = "ccflags-y := -Iinclude/linux"
+              if first not in s:
+                  raise SystemExit("Expected KGSL ccflags-y line not found")
+              s = s.replace(first, first + "\\n" + flag, 1)
+              p.write_text(s)
+          PY
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
