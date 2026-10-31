@@ -10,45 +10,39 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 180
-
     steps:
-      - name: Checkout kernel source
+      - name: Checkout kernel source matching the boot image
         uses: actions/checkout@v4
         with:
-          ref: lineage-22.2
+          repository: xiaomi-msm8953-devs/android_kernel_xiaomi_msm8953
+          ref: dcaf331bd84a5faf23b8641ff195e4833a5c47bc
           fetch-depth: 1
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            bc bison build-essential flex \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            libssl-dev libelf-dev lld clang llvm python3
+          sudo apt-get install -y bc bison build-essential flex gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libelf-dev lld clang llvm python3
 
-      - name: Configure baseline
+      - name: Configure Daisy baseline
         run: |
-          make ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            msm8953-perf_defconfig
-          make ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            olddefconfig
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- msm8953-perf_defconfig
+          scripts/kconfig/merge_config.sh -m .config arch/arm64/configs/xiaomi/daisy.config
+          # The pinned source tree lacks btfm_slim.h although BTFM_SLIM builds
+          # btfm_slim_codec.c. Disable this optional Slimbus codec for this
+          # build; this may affect BT/FM Slimbus audio features.
+          scripts/config --disable BTFM_SLIM --disable BTFM_SLIM_WCN3990
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- olddefconfig
+          grep -q '^CONFIG_MACH_XIAOMI_DAISY=y$' .config
+          grep -q '^CONFIG_TOUCHSCREEN_GT917D_D1S=y$' .config
           cp .config baseline.config
 
-      - name: Compile kernel
+      - name: Compile kernel image and device trees
         run: |
-          make -j2 ARCH=arm64 \
-            CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            Image.gz-dtb dtbs
+          make -j2 ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- Image.gz-dtb dtbs
+          test -s arch/arm64/boot/Image.gz-dtb
 
       - name: Upload build results
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: daisy-baseline-build
@@ -57,5 +51,5 @@ jobs:
             arch/arm64/boot/Image
             arch/arm64/boot/dts/qcom/*.dtb
             baseline.config
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
